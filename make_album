@@ -1,0 +1,186 @@
+#!/bin/bash
+
+# Standard error codes as defined in sysexits.h
+EX_USAGE=64
+EX_DATAERR=65
+
+# Usage
+read -d '' usage <<- EOF
+    Usage:
+    make_album -i input_file [--artist artist_name] [--album album_name] [--year album_release_year] [-t track_1_title ...] [-s track_2_beginning ...]
+    
+EOF
+
+read -d '' operation <<- EOF
+    Operation:
+    make_album is intended to split a long music file containing a full album into individual mp3 tracks.
+    -i specifies an input file containing audio. This file will be converted to mp3, mantaining the original, and it is a mandatory input.
+    --artist specifies artist name to be used in ID3 tags, optional.
+    --album specifies album name to be used in ID3 tags, optional.
+    --year specifies album release year to be used in ID3 tags, optional.
+    -t specifies track titles. If empty or too short, missing names will be generated as 'track_n' and ID3 field will be left blank.
+    If too long, titles in excess will be ignored.
+    -s specifies separation between tracks (beginning of track 2 to beginning of last track).
+    
+EOF
+
+function is_option {
+    if [[ $1 == -* ]]
+    then
+        return 0;   # Success, "if is_option" will execute
+    else
+        return 1;   # Failure, "if is_option" will not execute
+    fi
+}
+
+function is_time {
+    if [[ $1 =~ ^(([0-5])?[0-9]:)?[0-5][0-9]:[0-5][0-9]$ ]]
+    then
+        return 0;   # Success, "if is_time" will execute
+    else
+        return 1;   # Failure, "if is_time" will not execute
+    fi
+}
+
+# Option parsing
+while [[ $# -ge 1 ]]; do
+    case $1 in
+    -i)
+        shift
+        if is_option $1 || [[ $# -eq 0 ]]
+        then
+            <&2 echo "ERROR: -i (input file) needs an argument"
+            exit $EX_USAGE
+        else
+            input=$1
+        fi
+        shift;;
+    --artist)
+        shift
+        if is_option $1
+        then
+            <&2 echo "WARNING: --artist needs an argument, parameter ignored"
+        else
+            artist=$1
+        fi
+        shift;;
+    --album)
+        shift
+        if is_option $1
+        then
+            <&2 echo "ERROR: --album needs an argument, parameter ignored"
+        else
+            album=$1
+        fi
+        shift;;
+    --year)
+        shift
+        if is_option $1
+        then
+            <&2 echo "ERROR: --year needs an argument, parameter ignored"
+        else
+            year=$1
+        fi
+        shift;;
+    -s|--separator)
+        shift
+        declare -a separator
+        if is_option $1
+        then
+            <&2 echo "WARNING: -s (separators) needs one or more values, skipping file splitting"
+        fi
+        # Add separators until next option is found
+        until is_option $1; do
+            if [[ $# < 1 ]]; then break; fi
+            if is_time $1
+            then
+                separator+=($1)
+            else
+                # Print error message and exit
+                <&2 echo "ERROR: format for time separator is wrong. Correct format is:"
+                <&2 echo "[[h]h:]mm:ss"
+                exit $EX_DATAERR
+            fi
+            shift
+        done
+        echo "-s option took ${#separator[@]} parameters";;
+    -t|--title)
+        shift
+        declare -a title
+        if is_option $1
+        then
+            <&2 echo "ERROR: -t (trace titles) needs one or more values"
+        fi
+        # Add titles until the next option is found
+        until is_option $1; do
+            if [[ $# < 1 ]]; then break; fi
+            title+=("$1")
+            shift
+        done
+        echo "-t option took ${#title[@]} parameters";;
+    -h)
+        shift
+        echo "$usage"
+        echo "$operation"
+        exit 0;;
+    *)
+        <&2 echo "ERROR: unexpected argument $1"
+        exit $EX_USAGE;;
+    esac
+done
+
+# If input file is not specified, print usage and quit
+if [[ $input == "" ]]; then <&2 echo "ERROR: input file is not defined"; echo "$usage"; exit $EX_USAGE; fi
+
+echo -e $"Options:\nartist=$artist\nalbum=$album\nyear=$year\ntitle=${title[@]}\nseparator=${separator[@]}"
+
+if [[ ${#title[@]} -lt ${#separator[@]}+1 ]]
+then
+    echo "WARNING: cannot assign a title to each trace"
+else if [[ ${#title[@]} -gt ${#separator[@]}+1 ]]
+then
+    echo "WARNING: too many titles, check for missing separators"
+fi; fi
+
+# Get file name without extension (to sub it with mp3)
+no_ext=${input%.*}
+
+# Convert to mp3
+echo "File \"$input\" being now converted to \"$no_ext.mp3\""
+ffmpeg -loglevel error -y -i "$input" -id3v2_version 3 -codec libmp3lame -q 0 "$no_ext".mp3
+
+# Check if we have to split the file
+if [[ ${#separator[@]} -ne 0 ]]
+then
+    echo -e $"File is now being splitted\n"
+    # Iterate through separators
+    i=0
+    if [[ ${title[$i]} == "" ]]; then
+        title[$i]="Track_$[$i+1]"
+    fi
+    echo "Splitting \"$no_ext.mp3\" from beginning to ${separator[$i]}, saving in \"${title[$i]}.mp3\" and setting tags"
+    # No start parameter, have to change command
+    ffmpeg -loglevel error -y -i "$no_ext".mp3 -to ${separator[$i]} -id3v2_version 3 -metadata title="${title[$i]}" -metadata album="$album" -metadata artist="$artist"\
+    -metadata year="$year" "${title[$i]}".mp3
+    i=$[$i+1]
+    while [[ $i -lt ${#separator[@]} ]]; do
+        if [[ ${title[$i]} == "" ]]; then
+            title[$i]="Track_$[$i+1]"
+        fi
+        echo "Splitting \"$no_ext.mp3\" from ${separator[$i-1]} to ${separator[$i]}, saving in \"${title[$i]}.mp3\" and setting tags"
+        # Split and name and force tags
+        ffmpeg -loglevel panic -y -i "$no_ext".mp3 -ss ${separator[$i-1]} -to ${separator[$i]} -id3v2_version 3 -metadata title="${title[$i]}" -metadata album="$album"\
+        -metadata artist="$artist" -metadata year="$year" "${title[$i]}".mp3
+        (( ++i ))
+    done
+    if [[ ${title[$i]} == "" ]]; then
+        title[$i]="Track_$[$i+1]"
+    fi
+    echo "Splitting \"$no_ext.mp3\" from ${separator[$i-1]} to end, saving in \"${title[$i]}.mp3\" and setting tags"
+    # No end parameter, have to change command
+    ffmpeg -loglevel panic -y -i "$no_ext".mp3 -ss ${separator[$i-1]} -id3v2_version 3 -metadata title="${title[$i]}" -metadata album="$album" -metadata artist="$artist"\
+    -metadata year="$year" "${title[$i]}".mp3
+fi
+
+exit 0
+
