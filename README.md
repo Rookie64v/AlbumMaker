@@ -17,7 +17,7 @@ Got the recording of a conference and want to split it in different intervention
 
 Examples:
 make_album -i IEEE_conference_dummy_names --album IEEE_conf_2017 --year 2017\
--t "Inspiration and idiocy - Fundamentals of variable naming" "SuperFoo" "Bar Evolution" -i 10:35 15:43
+-t "Inspiration and idiocy - Fundamentals of variable naming" "SuperFoo" "Bar Evolution" -s 10:35 15:43
 
 make_album -i "kid concert" --year 2017 --artist "Little Billy" -t "That was bad" "It cannot get worse" "I was wrong"\
 please_get_ear_protection -s 3:40 8:27 10:53
