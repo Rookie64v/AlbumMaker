@@ -3,16 +3,25 @@
 # Standard error codes as defined in sysexits.h
 EX_USAGE=64
 EX_DATAERR=65
+EX_CMD_NOT_FOUND=127
+
+# Dependency
+read -d '' dependecy <<- EOF
+ffmpeg was not detected on this system. You can install it typing:
+    sudo apt-get install ffmpeg
+in your terminal (requires root privileges).
+    
+EOF
 
 # Usage
 read -d '' usage <<- EOF
-    Usage:
+Usage:
     make_album -i input_file [--artist artist_name] [--album album_name] [--year album_release_year] [-t track_1_title ...] [-s track_2_beginning ...]
     
 EOF
 
 read -d '' operation <<- EOF
-    Operation:
+Operation:
     make_album is intended to split a long music file containing a full album into individual mp3 tracks.
     -i specifies an input file containing audio. This file will be converted to mp3, mantaining the original, and it is a mandatory input.
     --artist specifies artist name to be used in ID3 tags, optional.
@@ -41,6 +50,13 @@ function is_time {
         return 1;   # Failure, "if is_time" will not execute
     fi
 }
+
+# Dependency check
+if ! command -v ffmpeg > /dev/null
+then
+    echo "$dependecy"
+    exit $EX_CMD_NOT_FOUND
+fi
 
 # Option parsing
 while [[ $# -ge 1 ]]; do
@@ -131,6 +147,8 @@ done
 
 # If input file is not specified, print usage and quit
 if [[ $input == "" ]]; then <&2 echo "ERROR: input file is not defined"; echo "$usage"; exit $EX_USAGE; fi
+# If input file does not exist, complain and quit
+if ! [[ -f $input ]]; then <&2 echo "ERROR: input file does not exist"; exit $EX_USAGE; fi
 
 echo -e $"Options:\nartist=$artist\nalbum=$album\nyear=$year\ntitle=${title[@]}\nseparator=${separator[@]}"
 
